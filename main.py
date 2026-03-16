@@ -1,123 +1,64 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI
 
 app = FastAPI()
 
-products = {
-    1: {"name": "Wireless Mouse", "price": 499, "stock": True},
-    2: {"name": "Notebook", "price": 99, "stock": True},
-    3: {"name": "USB Hub", "price": 299, "stock": False},
-    4: {"name": "Pen Set", "price": 49, "stock": True}
-}
+# Product list
+products = [
+    {"id": 1, "name": "Wireless Mouse", "price": 599, "category": "Electronics", "in_stock": True},
+    {"id": 2, "name": "Notebook", "price": 120, "category": "Stationery", "in_stock": True},
+    {"id": 3, "name": "Pen Set", "price": 49, "category": "Stationery", "in_stock": False},
+    {"id": 4, "name": "Monitor", "price": 7999, "category": "Electronics", "in_stock": True},
+    {"id": 5, "name": "Laptop Stand", "price": 999, "category": "Electronics", "in_stock": True},
+    {"id": 6, "name": "Mechanical Keyboard", "price": 2499, "category": "Electronics", "in_stock": True},
+    {"id": 7, "name": "Webcam", "price": 1499, "category": "Electronics", "in_stock": False},
+]
 
-cart = {}
-orders = []
-order_counter = 1
+# Q1
+@app.get("/products")
+def get_products():
+    return {"products": products, "total": len(products)}
 
+# Q2
+@app.get("/products/category/{category_name}")
+def category(category_name: str):
+    filtered = [p for p in products if p["category"].lower() == category_name.lower()]
+    if not filtered:
+        return {"error": "No products found in this category"}
+    return {"products": filtered}
 
-class Checkout(BaseModel):
-    customer_name: str
-    delivery_address: str
+# Q3
+@app.get("/products/instock")
+def instock():
+    instock_products = [p for p in products if p["in_stock"]]
+    return {"in_stock_products": instock_products, "count": len(instock_products)}
 
-
-@app.post("/cart/add")
-def add_to_cart(product_id: int, quantity: int = 1):
-
-    if product_id not in products:
-        raise HTTPException(status_code=404, detail="Product not found")
-
-    product = products[product_id]
-
-    if not product["stock"]:
-        raise HTTPException(status_code=400, detail=f"{product['name']} is out of stock")
-
-    if product_id in cart:
-        cart[product_id]["quantity"] += quantity
-        cart[product_id]["subtotal"] = cart[product_id]["quantity"] * product["price"]
-
-        return {"message": "Cart updated", "cart_item": cart[product_id]}
-
-    subtotal = quantity * product["price"]
-
-    cart[product_id] = {
-        "product_id": product_id,
-        "product_name": product["name"],
-        "quantity": quantity,
-        "unit_price": product["price"],
-        "subtotal": subtotal
-    }
-
-    return {"message": "Added to cart", "cart_item": cart[product_id]}
-
-
-@app.get("/cart")
-def view_cart():
-
-    if not cart:
-        return {"message": "Cart is empty"}
-
-    items = list(cart.values())
-    grand_total = sum(item["subtotal"] for item in items)
+# Q4
+@app.get("/store/summary")
+def summary():
+    total = len(products)
+    instock = len([p for p in products if p["in_stock"]])
+    outstock = total - instock
+    categories = list(set([p["category"] for p in products]))
 
     return {
-        "items": items,
-        "item_count": len(items),
-        "grand_total": grand_total
+        "store_name": "My E-commerce Store",
+        "total_products": total,
+        "in_stock": instock,
+        "out_of_stock": outstock,
+        "categories": categories
     }
 
+# Q5
+@app.get("/products/search/{keyword}")
+def search(keyword: str):
+    result = [p for p in products if keyword.lower() in p["name"].lower()]
+    if not result:
+        return {"message": "No products matched your search"}
+    return {"matched_products": result, "count": len(result)}
 
-@app.delete("/cart/{product_id}")
-def remove_item(product_id: int):
-
-    if product_id not in cart:
-        raise HTTPException(status_code=404, detail="Item not in cart")
-
-    removed_item = cart.pop(product_id)
-
-    return {"message": "Item removed", "removed_item": removed_item}
-
-
-@app.post("/cart/checkout")
-def checkout(data: Checkout):
-
-    global order_counter
-
-    if not cart:
-        raise HTTPException(status_code=400, detail="CART_EMPTY")
-
-    created_orders = []
-    grand_total = 0
-
-    for item in cart.values():
-
-        order = {
-            "order_id": order_counter,
-            "customer_name": data.customer_name,
-            "product": item["product_name"],
-            "quantity": item["quantity"],
-            "total_price": item["subtotal"],
-            "delivery_address": data.delivery_address
-        }
-
-        orders.append(order)
-        created_orders.append(order)
-
-        grand_total += item["subtotal"]
-        order_counter += 1
-
-    cart.clear()
-
-    return {
-        "message": "Checkout successful",
-        "orders_placed": created_orders,
-        "grand_total": grand_total
-    }
-
-
-@app.get("/orders")
-def view_orders():
-
-    return {
-        "orders": orders,
-        "total_orders": len(orders)
-    }
+# Bonus
+@app.get("/products/deals")
+def deals():
+    cheapest = min(products, key=lambda p: p["price"])
+    expensive = max(products, key=lambda p: p["price"])
+    return {"best_deal": cheapest, "premium_pick": expensive}
