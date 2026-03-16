@@ -1,208 +1,123 @@
-from fastapi import FastAPI
-from pydantic import BaseModel, Field
-from typing import List, Optional
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
 app = FastAPI()
 
-# -------------------------------
-# Product Data
-# -------------------------------
-products = [
-    {"id": 1, "name": "Wireless Mouse", "price": 499, "category": "Electronics", "in_stock": True},
-    {"id": 2, "name": "Notebook", "price": 99, "category": "Stationery", "in_stock": True},
-    {"id": 3, "name": "USB Hub", "price": 799, "category": "Electronics", "in_stock": False},
-    {"id": 4, "name": "Pen Set", "price": 49, "category": "Stationery", "in_stock": True},
-]
+products = {
+    1: {"name": "Wireless Mouse", "price": 499, "stock": True},
+    2: {"name": "Notebook", "price": 99, "stock": True},
+    3: {"name": "USB Hub", "price": 299, "stock": False},
+    4: {"name": "Pen Set", "price": 49, "stock": True}
+}
 
-feedback_list = []
+cart = {}
 orders = []
-
-# ------------------------------------------------
-# Q1 Filter Products
-# ------------------------------------------------
-@app.get("/products/filter")
-def filter_products(min_price: int = None, max_price: int = None, category: str = None):
-
-    result = products
-
-    if min_price is not None:
-        result = [p for p in result if p["price"] >= min_price]
-
-    if max_price is not None:
-        result = [p for p in result if p["price"] <= max_price]
-
-    if category:
-        result = [p for p in result if p["category"].lower() == category.lower()]
-
-    return result
+order_counter = 1
 
 
-# ------------------------------------------------
-# Q2 Product Price Endpoint
-# ------------------------------------------------
-@app.get("/products/{product_id}/price")
-def get_product_price(product_id: int):
-
-    for product in products:
-        if product["id"] == product_id:
-            return {
-                "name": product["name"],
-                "price": product["price"]
-            }
-
-    return {"error": "Product not found"}
+class Checkout(BaseModel):
+    customer_name: str
+    delivery_address: str
 
 
-# ------------------------------------------------
-# Q3 Customer Feedback
-# ------------------------------------------------
-class CustomerFeedback(BaseModel):
-    customer_name: str = Field(..., min_length=2)
-    product_id: int = Field(..., gt=0)
-    rating: int = Field(..., ge=1, le=5)
-    comment: Optional[str] = Field(None, max_length=300)
+@app.post("/cart/add")
+def add_to_cart(product_id: int, quantity: int = 1):
 
+    if product_id not in products:
+        raise HTTPException(status_code=404, detail="Product not found")
 
-@app.post("/feedback")
-def submit_feedback(feedback: CustomerFeedback):
+    product = products[product_id]
 
-    feedback_list.append(feedback.dict())
+    if not product["stock"]:
+        raise HTTPException(status_code=400, detail=f"{product['name']} is out of stock")
 
-    return {
-        "message": "Feedback submitted successfully",
-        "feedback": feedback,
-        "total_feedback": len(feedback_list)
+    if product_id in cart:
+        cart[product_id]["quantity"] += quantity
+        cart[product_id]["subtotal"] = cart[product_id]["quantity"] * product["price"]
+
+        return {"message": "Cart updated", "cart_item": cart[product_id]}
+
+    subtotal = quantity * product["price"]
+
+    cart[product_id] = {
+        "product_id": product_id,
+        "product_name": product["name"],
+        "quantity": quantity,
+        "unit_price": product["price"],
+        "subtotal": subtotal
     }
 
+    return {"message": "Added to cart", "cart_item": cart[product_id]}
 
-# ------------------------------------------------
-# Q4 Product Summary Dashboard
-# ------------------------------------------------
-@app.get("/products/summary")
-def product_summary():
 
-    total_products = len(products)
-    in_stock_count = len([p for p in products if p["in_stock"]])
-    out_of_stock_count = total_products - in_stock_count
+@app.get("/cart")
+def view_cart():
 
-    most_expensive = max(products, key=lambda x: x["price"])
-    cheapest = min(products, key=lambda x: x["price"])
+    if not cart:
+        return {"message": "Cart is empty"}
 
-    categories = list(set([p["category"] for p in products]))
+    items = list(cart.values())
+    grand_total = sum(item["subtotal"] for item in items)
 
     return {
-        "total_products": total_products,
-        "in_stock_count": in_stock_count,
-        "out_of_stock_count": out_of_stock_count,
-        "most_expensive": {
-            "name": most_expensive["name"],
-            "price": most_expensive["price"]
-        },
-        "cheapest": {
-            "name": cheapest["name"],
-            "price": cheapest["price"]
-        },
-        "categories": categories
-    }
-
-
-# ------------------------------------------------
-# Q5 Bulk Order
-# ------------------------------------------------
-class OrderItem(BaseModel):
-    product_id: int = Field(..., gt=0)
-    quantity: int = Field(..., ge=1, le=50)
-
-
-class BulkOrder(BaseModel):
-    company_name: str = Field(..., min_length=2)
-    contact_email: str = Field(..., min_length=5)
-    items: List[OrderItem]
-
-
-@app.post("/orders/bulk")
-def bulk_order(order: BulkOrder):
-
-    confirmed = []
-    failed = []
-    grand_total = 0
-
-    for item in order.items:
-
-        product = next((p for p in products if p["id"] == item.product_id), None)
-
-        if not product:
-            failed.append({
-                "product_id": item.product_id,
-                "reason": "Product not found"
-            })
-            continue
-
-        if not product["in_stock"]:
-            failed.append({
-                "product_id": item.product_id,
-                "reason": f"{product['name']} is out of stock"
-            })
-            continue
-
-        subtotal = product["price"] * item.quantity
-        grand_total += subtotal
-
-        confirmed.append({
-            "product": product["name"],
-            "qty": item.quantity,
-            "subtotal": subtotal
-        })
-
-    return {
-        "company": order.company_name,
-        "confirmed": confirmed,
-        "failed": failed,
+        "items": items,
+        "item_count": len(items),
         "grand_total": grand_total
     }
 
 
-# ------------------------------------------------
-# ⭐ BONUS Order Tracker
-# ------------------------------------------------
-class SimpleOrder(BaseModel):
-    product_id: int
-    quantity: int
+@app.delete("/cart/{product_id}")
+def remove_item(product_id: int):
+
+    if product_id not in cart:
+        raise HTTPException(status_code=404, detail="Item not in cart")
+
+    removed_item = cart.pop(product_id)
+
+    return {"message": "Item removed", "removed_item": removed_item}
 
 
-@app.post("/orders")
-def create_order(order: SimpleOrder):
+@app.post("/cart/checkout")
+def checkout(data: Checkout):
 
-    order_id = len(orders) + 1
+    global order_counter
 
-    new_order = {
-        "id": order_id,
-        "product_id": order.product_id,
-        "quantity": order.quantity,
-        "status": "pending"
+    if not cart:
+        raise HTTPException(status_code=400, detail="CART_EMPTY")
+
+    created_orders = []
+    grand_total = 0
+
+    for item in cart.values():
+
+        order = {
+            "order_id": order_counter,
+            "customer_name": data.customer_name,
+            "product": item["product_name"],
+            "quantity": item["quantity"],
+            "total_price": item["subtotal"],
+            "delivery_address": data.delivery_address
+        }
+
+        orders.append(order)
+        created_orders.append(order)
+
+        grand_total += item["subtotal"]
+        order_counter += 1
+
+    cart.clear()
+
+    return {
+        "message": "Checkout successful",
+        "orders_placed": created_orders,
+        "grand_total": grand_total
     }
 
-    orders.append(new_order)
 
-    return new_order
+@app.get("/orders")
+def view_orders():
 
-
-@app.get("/orders/{order_id}")
-def get_order(order_id: int):
-
-    for order in orders:
-        if order["id"] == order_id:
-            return order
-
-    return {"error": "Order not found"}
-
-
-@app.patch("/orders/{order_id}/confirm")
-def confirm_order(order_id: int):
-
-    for order in orders:
-        if order["id"] == order_id:
-            order["status"] = "confirmed"
-            return order
-
-    return {"error": "Order not found"}
+    return {
+        "orders": orders,
+        "total_orders": len(orders)
+    }
